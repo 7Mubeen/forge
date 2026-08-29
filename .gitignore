@@ -1,0 +1,20 @@
+# Forge build output
+/bin/
+dist/
+build/
+
+# Go
+*.test
+*.out
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Local test repositories
+.forge-test/
