@@ -90,8 +90,15 @@ func Init(root string) (*Repository, error) {
 		return nil, fmt.Errorf("failed to initialize object store: %w", err)
 	}
 
-	manifestStore := manifest.NewStore(objectStore)
-	commitStore := commit.NewStore(objectStore)
+	manifestStore, err := manifest.NewStore(objectStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize manifest store: %w", err)
+	}
+
+	commitStore, err := commit.NewStore(objectStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize commit store: %w", err)
+	}
 
 	return &Repository{
 		Root:          root,
@@ -141,8 +148,15 @@ func Open(root string) (*Repository, error) {
 		return nil, fmt.Errorf("failed to initialize object store: %w", err)
 	}
 
-	manifestStore := manifest.NewStore(objectStore)
-	commitStore := commit.NewStore(objectStore)
+	manifestStore, err := manifest.NewStore(objectStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize manifest store: %w", err)
+	}
+
+	commitStore, err := commit.NewStore(objectStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize commit store: %w", err)
+	}
 
 	return &Repository{
 		Root:          root,
