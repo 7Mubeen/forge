@@ -813,3 +813,204 @@ cat internal/object/store.go
 and paste the output here.
 
 Then I'll give you the exact manifest-storage implementation that matches your existing object store, rather than inventing an incompatible API.
+
+
+---
+
+## 2026-08-31 — Commit Storage
+
+### Implemented
+
+Built the Forge commit storage layer:
+
+```text
+internal/commit/
+├── commit.go
+├── commit_test.go
+├── store.go
+└── store_test.go
+
+
+The commit layer provides an immutable representation of repository history and persists commits through the existing content-addressed object store.
+
+Commit Storage
+
+The commit store provides:
+
+Commit serialization
+Commit deserialization
+Content-derived commit IDs
+Commit storage
+Commit retrieval
+Commit existence checks
+Commit integrity verification
+Corruption detection
+Missing commit detection
+Concurrent duplicate storage
+
+Commits are stored as ordinary Forge content-addressed objects.
+
+Conceptually:
+
+Commit
+   ↓
+Marshal
+   ↓
+Content bytes
+   ↓
+BLAKE3
+   ↓
+Forge object ID
+   ↓
+Object Store
+
+
+This keeps commits immutable and allows the existing object-store integrity guarantees to apply to repository history.
+
+Validation
+
+Commit storage tests cover:
+
+Put and Get
+Deduplication
+Existence checks
+Missing commits
+Integrity verification
+Corruption detection
+Invalid commits
+Concurrent duplicate writes
+Parent-child commit relationships
+Test Results
+
+Normal tests:
+
+go test ./...
+
+ok    forge/internal/chunk
+ok    forge/internal/commit
+ok    forge/internal/hash
+ok    forge/internal/manifest
+ok    forge/internal/object
+
+
+Race detector:
+
+go test -race ./...
+
+ok    forge/internal/chunk
+ok    forge/internal/commit
+ok    forge/internal/hash
+ok    forge/internal/manifest
+ok    forge/internal/object
+
+
+All tests pass.
+
+Architectural State
+
+Forge now has the following completed local storage primitives:
+
+Hashing
+   ✓
+   ↓
+Object Store
+   ✓
+   ↓
+Chunking
+   ✓
+   ↓
+Manifest
+   ✓
+   ↓
+Manifest Store
+   ✓
+   ↓
+Commit Model
+   ✓
+   ↓
+Commit Store
+   ✓
+
+
+The next layer is the repository integration layer.
+
+Next Task
+Repository Integration
+
+Build:
+
+internal/repository/
+
+
+The repository layer will compose the existing storage primitives into a complete local Forge repository.
+
+Initial responsibilities:
+
+Repository initialization
+Repository opening
+.forge/ directory layout
+Object store initialization
+Manifest store initialization
+Commit store initialization
+Repository metadata
+Repository validation
+
+Target layout:
+
+project/
+├── user files
+└── .forge/
+    ├── objects/
+    ├── refs/
+    └── config
+
+
+The repository layer should remain local and offline.
+
+It should not introduce networking, remotes, authentication, or other distributed functionality.
+
+The immediate goal is to prove that the existing primitives can be safely composed into a single Forge repository.
+
+:::
+
+Then save and run:
+
+```bash
+gofmt -w internal/commit/*.go
+
+
+DEVELOPMENT.md is Markdown, so gofmt does not apply to it. Just save the file normally.
+
+Then verify:
+
+git diff -- DEVELOPMENT.md
+
+
+And finally:
+
+go test ./...
+go test -race ./...
+
+
+If both remain green, commit this development-log update before starting repository implementation:
+
+git add DEVELOPMENT.md
+git commit -m "docs: record commit storage milestone"
+
+
+Then:
+
+git status
+
+
+We want the repository clean again before writing the next layer.
+## 2026-09-02 — Repository Integration
+
+### Implemented
+
+Built the Forge repository integration layer:
+
+```text
+internal/repository/
+├── repository.go
+└── repository_test.go
