@@ -1014,3 +1014,13 @@ Built the Forge repository integration layer:
 internal/repository/
 ├── repository.go
 └── repository_test.go
+
+## 2026-09-02 — CLI Foundation and `init` Command
+
+### Implemented
+
+Created the Forge command-line interface entry point:
+
+```text
+cmd/forge/
+└── main.go
