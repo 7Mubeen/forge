@@ -1024,3 +1024,40 @@ Created the Forge command-line interface entry point:
 ```text
 cmd/forge/
 └── main.go
+
+
+
+## 2026-09-02 — `commit` Command and HEAD Management
+
+### Implemented
+
+Completed the core version control loop by implementing `forge commit`.
+
+Repository Refs
+Added `GetHead()` and `SetHead()` to the `Repository` struct to manage the `.forge/HEAD` file, which tracks the current commit ID.
+
+`forge commit`
+The CLI now supports `forge commit -m "message"`.
+
+Behavior:
+1. Loads the current `.forge/index`.
+2. Constructs a `manifest.Manifest` from the index entries.
+3. Stores the manifest in the `ManifestStore` to obtain a content-derived manifest ID.
+4. Reads the current `HEAD` to determine the parent commit (if any).
+5. Creates a `commit.Commit` object (using `New` for root commits, `NewWithParent` otherwise).
+6. Stores the commit in the `CommitStore`.
+7. Updates `.forge/HEAD` to point to the new commit ID.
+
+Testing
+Manual verification confirmed:
+- `forge commit` successfully creates a root commit when no prior commits exist.
+- Subsequent commits correctly link to the parent commit ID.
+- The manifest and commit are properly stored as content-addressed objects.
+
+Architectural State
+Forge now has a complete, functional local version control loop: `init` → `add` → `commit`.
+
+Next Task
+Implement `forge log` and `forge status`.
+- `forge log`: Traverse the commit history via parent IDs and print commit metadata.
+- `forge status`: Compare the working directory and index against the current HEAD manifest.

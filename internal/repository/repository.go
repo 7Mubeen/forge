@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"forge/internal/commit"
 	"forge/internal/manifest"
@@ -172,4 +173,23 @@ func Exists(root string) bool {
 	forgePath := filepath.Join(root, ForgeDir)
 	info, err := os.Stat(forgePath)
 	return err == nil && info.IsDir()
+}
+
+// GetHead returns the current HEAD commit ID, or an empty string if the repository is new.
+func (r *Repository) GetHead() (string, error) {
+	headPath := filepath.Join(r.Root, ForgeDir, "HEAD")
+	data, err := os.ReadFile(headPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// SetHead updates the HEAD reference to point to the given commit ID.
+func (r *Repository) SetHead(commitID string) error {
+	headPath := filepath.Join(r.Root, ForgeDir, "HEAD")
+	return os.WriteFile(headPath, []byte(commitID+"\n"), 0644)
 }
