@@ -1108,3 +1108,44 @@ Forge now has a complete, functional local version control system capable of tim
 
 Next Task
 Implement `forge fsck` (integrity verification) and `forge gc` (garbage collection) to complete the V1 Definition of Done.
+
+## 2026-09-03 — `fsck` and `gc` Commands (V1 Complete)
+
+### Implemented
+
+Implemented `forge fsck` and `forge gc` to complete the V1 Definition of Done.
+
+`forge fsck`
+Walks the commit history from HEAD and verifies the integrity of every object:
+- Verifies commit objects.
+- Verifies manifest objects.
+- Verifies chunk objects.
+Reports a summary of checked objects and any corruption found.
+
+`forge gc`
+Identifies all reachable objects by walking the commit history and collecting:
+- Commit IDs
+- Manifest IDs
+- Chunk IDs
+Walks the object store directory and deletes any object that is not in the reachable set. Reports a summary of kept and removed objects.
+
+### V1 Definition of Done
+
+Forge V1 is now complete. It can:
+- Initialize a repository
+- Add large files
+- Chunk them
+- Hash them
+- Deduplicate them
+- Create a manifest
+- Create a commit
+- Create another version
+- View history
+- Checkout either version
+- Verify repository integrity
+- Garbage-collect unreachable objects
+
+All of this works without a network connection, proving the core data model.
+
+Next Task
+Begin V2: Remote storage + push/pull.

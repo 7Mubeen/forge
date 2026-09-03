@@ -40,6 +40,10 @@ func main() {
 		err = runStatus(args)
 	case "checkout":
 		err = runCheckout(args)
+	case "fsck":
+		err = runFsck(args)
+	case "gc":
+		err = runGc(args)
 	case "help", "-h", "--help":
 		printUsage()
 		return
@@ -72,6 +76,10 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("switch branches or restore working tree files:")
 	fmt.Println("  checkout  Switch commits and restore files")
+	fmt.Println()
+	fmt.Println("maintenance and integrity:")
+	fmt.Println("  fsck      Verify the integrity of the repository")
+	fmt.Println("  gc        Garbage-collect unreachable objects")
 }
 
 func runInit(args []string) error {
@@ -484,13 +492,11 @@ func runCheckout(args []string) error {
 		return err
 	}
 
-	// 1. Load the target commit
 	c, err := repo.CommitStore.Get(commitID)
 	if err != nil {
 		return fmt.Errorf("loading commit %s: %w", commitID, err)
 	}
 
-	// 2. Load the target manifest
 	m, err := repo.ManifestStore.Get(c.Manifest)
 	if err != nil {
 		return fmt.Errorf("loading manifest for commit %s: %w", commitID, err)
@@ -498,7 +504,6 @@ func runCheckout(args []string) error {
 
 	indexPath := filepath.Join(repo.Root, repository.ForgeDir, "index")
 
-	// 3. Clean up files that were in the old index but are not in the new manifest
 	oldIdx, err := index.Load(indexPath)
 	if err != nil {
 		return fmt.Errorf("loading old index: %w", err)
@@ -515,7 +520,6 @@ func runCheckout(args []string) error {
 			if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("removing old file %s: %w", entry.Path, err)
 			}
-			// Try to remove empty parent directories
 			dir := filepath.Dir(absPath)
 			for dir != repoRoot {
 				if err := os.Remove(dir); err != nil {
@@ -526,7 +530,6 @@ func runCheckout(args []string) error {
 		}
 	}
 
-	// 4. Reconstruct files in the working directory
 	for _, file := range m.Files {
 		absPath := filepath.Join(repo.Root, file.Path)
 
@@ -556,7 +559,6 @@ func runCheckout(args []string) error {
 		outFile.Close()
 	}
 
-	// 5. Update the index to match the new manifest
 	newIdx := &index.Index{}
 
 	for _, file := range m.Files {
@@ -584,12 +586,186 @@ func runCheckout(args []string) error {
 		return fmt.Errorf("saving index: %w", err)
 	}
 
-	// 6. Update HEAD
 	if err := repo.SetHead(commitID); err != nil {
 		return fmt.Errorf("updating HEAD: %w", err)
 	}
 
 	fmt.Printf("Switched to commit %s\n", commitID)
+	return nil
+}
+
+func runFsck(args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting current directory: %w", err)
+	}
+
+	repoRoot, err := findRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+
+	repo, err := repository.Open(repoRoot)
+	if err != nil {
+		return err
+	}
+
+	headID, err := repo.GetHead()
+	if err != nil {
+		return fmt.Errorf("getting HEAD: %w", err)
+	}
+
+	if headID == "" {
+		fmt.Println("no commits to verify")
+		return nil
+	}
+
+	var commitsChecked, manifestsChecked, chunksChecked int
+	var errorsFound int
+
+	currentID := headID
+	for currentID != "" {
+		if err := repo.CommitStore.Verify(currentID); err != nil {
+			fmt.Printf("corrupt commit: %s (%v)\n", currentID, err)
+			errorsFound++
+			break
+		}
+		commitsChecked++
+
+		c, err := repo.CommitStore.Get(currentID)
+		if err != nil {
+			fmt.Printf("error reading commit %s: %v\n", currentID, err)
+			errorsFound++
+			break
+		}
+
+		if err := repo.ManifestStore.Verify(c.Manifest); err != nil {
+			fmt.Printf("corrupt manifest: %s (%v)\n", c.Manifest, err)
+			errorsFound++
+		} else {
+			manifestsChecked++
+			m, err := repo.ManifestStore.Get(c.Manifest)
+			if err != nil {
+				fmt.Printf("error reading manifest %s: %v\n", c.Manifest, err)
+				errorsFound++
+			} else {
+				for _, f := range m.Files {
+					for _, chunkID := range f.Chunks {
+						if err := repo.ObjectStore.Verify(chunkID); err != nil {
+							fmt.Printf("corrupt chunk: %s (%v)\n", chunkID, err)
+							errorsFound++
+						} else {
+							chunksChecked++
+						}
+					}
+				}
+			}
+		}
+
+		currentID = c.Parent
+	}
+
+	fmt.Printf("\nfsck summary:\n")
+	fmt.Printf("  commits checked:   %d\n", commitsChecked)
+	fmt.Printf("  manifests checked: %d\n", manifestsChecked)
+	fmt.Printf("  chunks checked:    %d\n", chunksChecked)
+	fmt.Printf("  errors found:      %d\n", errorsFound)
+
+	if errorsFound > 0 {
+		return fmt.Errorf("repository has %d errors", errorsFound)
+	}
+	fmt.Println("repository is healthy")
+	return nil
+}
+
+func runGc(args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting current directory: %w", err)
+	}
+
+	repoRoot, err := findRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+
+	repo, err := repository.Open(repoRoot)
+	if err != nil {
+		return err
+	}
+
+	reachable := make(map[string]bool)
+
+	headID, err := repo.GetHead()
+	if err != nil {
+		return fmt.Errorf("getting HEAD: %w", err)
+	}
+
+	if headID != "" {
+		currentID := headID
+		for currentID != "" {
+			reachable[currentID] = true
+			c, err := repo.CommitStore.Get(currentID)
+			if err != nil {
+				return fmt.Errorf("reading commit %s: %w", currentID, err)
+			}
+			reachable[c.Manifest] = true
+			m, err := repo.ManifestStore.Get(c.Manifest)
+			if err != nil {
+				return fmt.Errorf("reading manifest %s: %w", c.Manifest, err)
+			}
+			for _, f := range m.Files {
+				for _, chunkID := range f.Chunks {
+					reachable[chunkID] = true
+				}
+			}
+			currentID = c.Parent
+		}
+	}
+
+	objectsDir := filepath.Join(repo.Root, repository.ForgeDir, repository.ObjectsDir)
+	var removed int
+	var kept int
+
+	err = filepath.Walk(objectsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(objectsDir, path)
+		if err != nil {
+			return nil
+		}
+
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) != 2 {
+			return nil
+		}
+
+		id := "blake3:" + parts[0] + parts[1]
+
+		if !reachable[id] {
+			if err := os.Remove(path); err == nil {
+				removed++
+			}
+		} else {
+			kept++
+		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("walking object store: %w", err)
+	}
+
+	fmt.Printf("gc summary:\n")
+	fmt.Printf("  reachable objects: %d\n", len(reachable))
+	fmt.Printf("  objects kept:      %d\n", kept)
+	fmt.Printf("  objects removed:   %d\n", removed)
+
 	return nil
 }
 
