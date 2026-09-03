@@ -1086,3 +1086,25 @@ Forge now has a complete, observable local version control loop: `init` → `add
 
 Next Task
 Implement `forge checkout` to restore files from a specific commit to the working directory, completing the ability to time-travel through massive datasets.
+## 2026-09-03 — `checkout` Command
+
+### Implemented
+
+Implemented `forge checkout <commit-id>` to restore files from a specific commit to the working directory.
+
+Checkout Logic
+The command performs the following steps:
+1. Loads the target commit and its associated manifest.
+2. Cleans up files that existed in the previous index but are not in the new manifest (including removing empty parent directories).
+3. Reconstructs all files in the working directory by streaming their chunks from the object store.
+4. Updates the index to reflect the new state, including recalculating the overall file hashes for fast `status` checks.
+5. Updates `HEAD` to point to the new commit.
+
+Testing
+Manual verification confirmed that `checkout` successfully restores files to their exact historical state and correctly cleans up files that were deleted in that version.
+
+Architectural State
+Forge now has a complete, functional local version control system capable of time-traveling through massive datasets.
+
+Next Task
+Implement `forge fsck` (integrity verification) and `forge gc` (garbage collection) to complete the V1 Definition of Done.

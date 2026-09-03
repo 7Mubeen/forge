@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,6 +38,8 @@ func main() {
 		err = runLog(args)
 	case "status":
 		err = runStatus(args)
+	case "checkout":
+		err = runCheckout(args)
 	case "help", "-h", "--help":
 		printUsage()
 		return
@@ -57,15 +60,18 @@ func printUsage() {
 	fmt.Println("These are common Forge commands used in various situations:")
 	fmt.Println()
 	fmt.Println("start a working area:")
-	fmt.Println("  init    Create an empty Forge repository")
+	fmt.Println("  init      Create an empty Forge repository")
 	fmt.Println()
 	fmt.Println("work on current change:")
-	fmt.Println("  add     Add file contents to the index")
-	fmt.Println("  commit  Record changes to the repository")
+	fmt.Println("  add       Add file contents to the index")
+	fmt.Println("  commit    Record changes to the repository")
 	fmt.Println()
 	fmt.Println("examine the history and state:")
-	fmt.Println("  log     Show commit logs")
-	fmt.Println("  status  Show the working tree status")
+	fmt.Println("  log       Show commit logs")
+	fmt.Println("  status    Show the working tree status")
+	fmt.Println()
+	fmt.Println("switch branches or restore working tree files:")
+	fmt.Println("  checkout  Switch commits and restore files")
 }
 
 func runInit(args []string) error {
@@ -139,7 +145,6 @@ func runAdd(args []string) error {
 			return fmt.Errorf("adding directories is not yet supported: %s", arg)
 		}
 
-		// 1. Calculate the overall hash for fast status checks later
 		hashFile, err := os.Open(absPath)
 		if err != nil {
 			return fmt.Errorf("opening %s for hashing: %w", arg, err)
@@ -150,7 +155,6 @@ func runAdd(args []string) error {
 			return fmt.Errorf("hashing %s: %w", arg, err)
 		}
 
-		// 2. Chunk the file for content-addressed storage
 		chunker, err := chunk.NewWithSize(repo.ObjectStore, repo.Config.DefaultChunkSize)
 		if err != nil {
 			return fmt.Errorf("creating chunker: %w", err)
@@ -329,7 +333,6 @@ func runStatus(args []string) error {
 		return err
 	}
 
-	// 1. Get HEAD manifest
 	headID, err := repo.GetHead()
 	if err != nil {
 		return fmt.Errorf("getting HEAD: %w", err)
@@ -349,15 +352,13 @@ func runStatus(args []string) error {
 		headManifest = manifest.New()
 	}
 
-	// 2. Get current index
 	indexPath := filepath.Join(repo.Root, repository.ForgeDir, "index")
 	idx, err := index.Load(indexPath)
 	if err != nil {
 		return fmt.Errorf("loading index: %w", err)
 	}
 
-	// 3. Get working directory files
-	workDirFiles := make(map[string]string) // relPath -> absPath
+	workDirFiles := make(map[string]string)
 	err = filepath.Walk(repo.Root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -380,7 +381,6 @@ func runStatus(args []string) error {
 		return fmt.Errorf("walking working directory: %w", err)
 	}
 
-	// Maps for easy lookup
 	headFiles := make(map[string]manifest.File)
 	for _, f := range headManifest.Files {
 		headFiles[f.Path] = f
@@ -391,7 +391,6 @@ func runStatus(args []string) error {
 		indexFiles[e.Path] = e
 	}
 
-	// 4. Compare HEAD vs Index (Staged changes)
 	var stagedNew, stagedModified, stagedDeleted []string
 
 	for path, idxEntry := range indexFiles {
@@ -410,7 +409,6 @@ func runStatus(args []string) error {
 		}
 	}
 
-	// 5. Compare Index vs Working Dir (Unstaged changes)
 	var unstagedModified, unstagedDeleted []string
 	var untracked []string
 
@@ -435,7 +433,6 @@ func runStatus(args []string) error {
 		}
 	}
 
-	// 6. Print output
 	fmt.Println("On branch main")
 
 	hasStaged := len(stagedNew) > 0 || len(stagedModified) > 0 || len(stagedDeleted) > 0
@@ -462,6 +459,137 @@ func runStatus(args []string) error {
 		fmt.Println("\nnothing to commit, working tree clean")
 	}
 
+	return nil
+}
+
+func runCheckout(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("you must specify a commit ID to checkout")
+	}
+
+	commitID := args[0]
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting current directory: %w", err)
+	}
+
+	repoRoot, err := findRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+
+	repo, err := repository.Open(repoRoot)
+	if err != nil {
+		return err
+	}
+
+	// 1. Load the target commit
+	c, err := repo.CommitStore.Get(commitID)
+	if err != nil {
+		return fmt.Errorf("loading commit %s: %w", commitID, err)
+	}
+
+	// 2. Load the target manifest
+	m, err := repo.ManifestStore.Get(c.Manifest)
+	if err != nil {
+		return fmt.Errorf("loading manifest for commit %s: %w", commitID, err)
+	}
+
+	indexPath := filepath.Join(repo.Root, repository.ForgeDir, "index")
+
+	// 3. Clean up files that were in the old index but are not in the new manifest
+	oldIdx, err := index.Load(indexPath)
+	if err != nil {
+		return fmt.Errorf("loading old index: %w", err)
+	}
+
+	newManifestPaths := make(map[string]bool)
+	for _, file := range m.Files {
+		newManifestPaths[file.Path] = true
+	}
+
+	for _, entry := range oldIdx.Entries {
+		if !newManifestPaths[entry.Path] {
+			absPath := filepath.Join(repo.Root, entry.Path)
+			if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("removing old file %s: %w", entry.Path, err)
+			}
+			// Try to remove empty parent directories
+			dir := filepath.Dir(absPath)
+			for dir != repoRoot {
+				if err := os.Remove(dir); err != nil {
+					break
+				}
+				dir = filepath.Dir(dir)
+			}
+		}
+	}
+
+	// 4. Reconstruct files in the working directory
+	for _, file := range m.Files {
+		absPath := filepath.Join(repo.Root, file.Path)
+
+		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+			return fmt.Errorf("creating directory for %s: %w", file.Path, err)
+		}
+
+		outFile, err := os.Create(absPath)
+		if err != nil {
+			return fmt.Errorf("creating file %s: %w", file.Path, err)
+		}
+
+		for _, chunkID := range file.Chunks {
+			reader, err := repo.ObjectStore.Get(chunkID)
+			if err != nil {
+				outFile.Close()
+				return fmt.Errorf("reading chunk %s for %s: %w", chunkID, file.Path, err)
+			}
+
+			_, err = io.Copy(outFile, reader)
+			reader.Close()
+			if err != nil {
+				outFile.Close()
+				return fmt.Errorf("writing chunk %s for %s: %w", chunkID, file.Path, err)
+			}
+		}
+		outFile.Close()
+	}
+
+	// 5. Update the index to match the new manifest
+	newIdx := &index.Index{}
+
+	for _, file := range m.Files {
+		absPath := filepath.Join(repo.Root, file.Path)
+
+		hashFile, err := os.Open(absPath)
+		if err != nil {
+			return fmt.Errorf("opening %s for hashing: %w", file.Path, err)
+		}
+		overallHash, err := hash.SumReader(hashFile)
+		hashFile.Close()
+		if err != nil {
+			return fmt.Errorf("hashing %s: %w", file.Path, err)
+		}
+
+		newIdx.AddOrUpdate(index.Entry{
+			Path:   file.Path,
+			Size:   file.Size,
+			Hash:   overallHash,
+			Chunks: file.Chunks,
+		})
+	}
+
+	if err := newIdx.Save(indexPath); err != nil {
+		return fmt.Errorf("saving index: %w", err)
+	}
+
+	// 6. Update HEAD
+	if err := repo.SetHead(commitID); err != nil {
+		return fmt.Errorf("updating HEAD: %w", err)
+	}
+
+	fmt.Printf("Switched to commit %s\n", commitID)
 	return nil
 }
 
