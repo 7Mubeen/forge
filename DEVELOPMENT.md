@@ -1061,3 +1061,28 @@ Next Task
 Implement `forge log` and `forge status`.
 - `forge log`: Traverse the commit history via parent IDs and print commit metadata.
 - `forge status`: Compare the working directory and index against the current HEAD manifest.
+
+
+## 2026-09-03 — `status` Command
+
+### Implemented
+
+Implemented `forge status` to compare the working directory, index, and HEAD manifest.
+
+Index Enhancement
+Added an overall `Hash` field to `index.Entry`. This allows `status` to quickly detect file modifications by streaming the file through the hasher once, rather than re-chunking it, ensuring high performance for massive datasets.
+
+Status Logic
+The command calculates three states:
+1. **Staged (Index vs HEAD)**: Files added, modified, or deleted in the index compared to the last commit.
+2. **Unstaged (Working Dir vs Index)**: Files modified or deleted in the working directory compared to the index.
+3. **Untracked**: Files in the working directory that are not in the index.
+
+Testing
+Manual verification confirmed that `status` correctly identifies new, modified, deleted, and untracked files across all states of the version control lifecycle.
+
+Architectural State
+Forge now has a complete, observable local version control loop: `init` → `add` → `status` → `commit` → `log`.
+
+Next Task
+Implement `forge checkout` to restore files from a specific commit to the working directory, completing the ability to time-travel through massive datasets.
