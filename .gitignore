@@ -18,3 +18,4 @@ build/
 
 # Local test repositories
 .forge-test/
+forge
